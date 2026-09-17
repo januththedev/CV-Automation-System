@@ -1,0 +1,47 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    container_name: cv-auto-api
+    restart: unless-stopped
+    ports:
+      # Dashboard/API stay private to the host; a reverse proxy owns the public HTTPS webhook.
+      - "127.0.0.1:3000:3000"
+    environment:
+      - NODE_ENV=production
+      - CV_CONFIG_DIR=/data/config
+      - CV_DATA_DIR=/data/data
+      - CV_LOG_DIR=/data/logs
+      - CV_REDIS_URL=redis://redis:6379
+    volumes:
+      - ./data/cv-auto:/data
+    depends_on:
+      - redis
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    container_name: cv-auto-worker
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - CV_CONFIG_DIR=/data/config
+      - CV_DATA_DIR=/data/data
+      - CV_LOG_DIR=/data/logs
+      - CV_REDIS_URL=redis://redis:6379
+    volumes:
+      - ./data/cv-auto:/data
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    container_name: cv-auto-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ./data/cv-auto/redis:/data
