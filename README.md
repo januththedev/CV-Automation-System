@@ -65,11 +65,12 @@ git clone https://github.com/januththedev/CV-Automation-System.git /opt/cv-auto
 cd /opt/cv-auto
 ```
 
-### Step 3 — Provide provider credentials (environment variables only)
+### Step 3 — Have your provider credentials ready
 
-Credentials are **never** written into source files. Export them for the setup
-session (or use a secrets manager); `setup.sh` writes a protected
-`data/cv-auto/config/runtime.env` (0600) from these values:
+Credentials are **never** written into source files. The launcher asks for
+them interactively in step 4 (or you can pre-export them below, in which case
+the prompts let you press Enter to keep them). Either way they end up only in
+the protected `data/cv-auto/config/runtime.env` (0600).
 
 ```bash
 export CV_WHATSAPP_TOKEN="<your WhatsApp permanent token>"
@@ -88,26 +89,36 @@ You may also export `CV_ADMIN_NUMBER` here. If you don't, **the setup asks you
 for it in the next step** — that is the number the system sends every notice
 to.
 
-### Step 4 — Build, start, and choose the notice number
+### Step 4 — One command: install, ask, save, start
+
+On Kali **without Docker**, everything is a single command:
 
 ```bash
-bash setup.sh --start
+node scripts/run-native.mjs
 ```
 
-If you did not export `CV_ADMIN_NUMBER`, setup prompts:
+It does the whole job in one pass:
 
-```
-WhatsApp number that receives system notices (telemetry), e.g. 9477XXXXXXX:
-```
+1. **Installs dependencies** (`npm ci`), enables the native database build Kali
+   blocks by default, and compiles the appliance.
+2. **Asks you for each credential, one by one** — secrets are hidden while you
+   type them. The WhatsApp number you enter here is the number every system
+   notice goes to, and it is saved in the appliance **database**.
+3. **Saves everything** into the protected `data/cv-auto/config/runtime.env`
+   (0600) and generates your admin token. If a configuration already exists it
+   asks before touching it, and always keeps a timestamped backup.
+4. **Starts redis, the API, the worker, and the admin panel** and prints the
+   banner below, then sends the WhatsApp "CV AUTOMATION ONLINE" message to the
+   number you entered.
 
-Enter any WhatsApp number you own. It is validated, saved in the appliance
-**database** (`settings.notification_number`), and from then on **all** system
-notices — the "online" message with the SSH connection string, application
-failures, reviews, and model changes — are sent to that number. Nothing is
-sent anywhere else, and your secrets never appear on screen or in messages.
+To stop: `node scripts/run-native.mjs --stop`. To change credentials later:
+run it again and answer `y` when it asks to overwrite (the old file is backed
+up, never destroyed).
 
-Setup then builds the images, starts the stack, and prints the **display
-banner**:
+Prefer Docker/compose instead? `bash setup.sh --start` does the same through
+containers — both paths are fully supported.
+
+The command finishes with the **display banner**:
 
 ```
 ================================================================
