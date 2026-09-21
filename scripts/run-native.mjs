@@ -9,7 +9,6 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
-import { Writable } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { networkInterfaces } from 'node:os';
 import { configure } from './configure.mjs';
@@ -31,23 +30,29 @@ function quiet(cmd, args) {
 
 // One readline instance for the whole session. Lines are queued as they
 // arrive (piped input delivers them all at once, so a per-question listener
-// would drop everything after the first answer). Hidden prompts swap the
-// output stream so typed secrets are never echoed.
-const muted = new Writable({ write(_chunk, _enc, cb) { cb(); } });
+// would drop everything after the first answer). Secret prompts echo what the
+// user types so pasted keys are visible while entering; the terminal erase
+// sequence clears that line after Enter, so the value is hidden only once
+// submitted.
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 const pendingLines = [];
 rl.on('line', (line) => { pendingLines.push(line); });
 function ask(question, hidden) {
   return new Promise((resolve) => {
-    rl.output = hidden ? muted : process.stdout;
     // Write directly to the output stream: piped input closes the readline
     // interface at EOF while the queued lines remain usable.
     rl.output.write(question);
     const take = () => {
       if (pendingLines.length > 0) {
-        rl.output = process.stdout;
-        if (hidden) process.stdout.write('\n');
-        resolve(pendingLines.shift().trim());
+        const value = pendingLines.shift().trim();
+        // With a terminal (interactive typing) readline already echoed the
+        // answer; move the cursor up and blank it so the value is masked
+        // after submit, then restore a clean prompt line.
+        if (hidden && rl.terminal) {
+          process.stdout.write('\x1b[1A\x1b[2K');
+        }
+        process.stdout.write('\n');
+        resolve(value);
       } else {
         setTimeout(take, 10);
       }
@@ -73,7 +78,8 @@ async function requiredVisible(label, envName, out, pattern) {
 
 async function collectCredentials() {
   const out = { ...process.env };
-  console.log('\n=== PROVIDER CREDENTIALS (secrets are hidden while typing) ===');
+  console.log('\n=== PROVIDER CREDENTIALS ===');
+  console.log('What you type is shown while you enter it, then cleared after you press Enter.');
   console.log('Press Enter for any value already exported in your environment.');
   await requiredHidden('WhatsApp permanent access token', 'CV_WHATSAPP_TOKEN', out);
   await requiredVisible('WhatsApp Phone Number ID', 'CV_WHATSAPP_PHONE_ID', out);
