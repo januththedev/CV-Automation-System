@@ -24,6 +24,14 @@ describe('OpenRouter transport (no network)', () => {
     expect(body.provider.allow_fallbacks).toBe(false);
   });
 
+  it('rejects base URLs whose host is loopback, private or reserved', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(completion('{}')));
+    for (const baseUrl of ['https://127.0.0.1/v1', 'https://10.0.0.5/v1', 'https://192.168.1.1/v1',
+      'https://169.254.169.254/v1', 'https://localhost/v1', 'https://[::1]/v1', 'https://[fc00::1]/v1']) {
+      await expect(chatJSON('s', 'u', { ...cfg, baseUrl })).rejects.toThrow(/public address/);
+    }
+  });
+
   it('retries transient responses, not authentication failures', async () => {
     const fetch = vi.fn().mockResolvedValueOnce(new Response('', { status: 429 }))
       .mockResolvedValueOnce(completion('{}'));

@@ -19,6 +19,7 @@ export interface AdminOnlineDetails {
   sshHint: string;
   dashboardUrl: string;
   fingerprint?: string;
+  sshTunnel?: string;
 }
 
 // These templates accept only display fields, never configuration objects or credentials.
@@ -36,8 +37,10 @@ function dashboard(value: string): string {
 }
 export function adminOnline(details: AdminOnlineDetails): string {
   const ssh = /^ssh (?:-p \d{1,5} )?[\w.-]+@[\w.:[\]-]+$/.test(details.sshHint) ? details.sshHint : 'Use your configured SSH account';
+  const tunnel = details.sshTunnel && /^ssh -L \d{1,5}:127\.0\.0\.1:\d{1,5} [\w.-]+@[\w.:[\]-]+$/.test(details.sshTunnel)
+    ? `\nTunnel: ${details.sshTunnel}` : '';
   const fingerprint = details.fingerprint && /^SHA256:[A-Za-z0-9+/=]+$/.test(details.fingerprint) ? `\nSSH Fingerprint: ${details.fingerprint}` : '';
-  return `CV AUTOMATION ONLINE\nDevice: ${safe(details.deviceName)}\nIP: ${safe(details.ip)}\nSSH: ${ssh}\nDashboard: ${dashboard(details.dashboardUrl)}${fingerprint}\nStatus: ONLINE`;
+  return `CV AUTOMATION ONLINE\nDevice: ${safe(details.deviceName)}\nIP: ${safe(details.ip)}\nSSH: ${ssh}${tunnel}\nDashboard: ${dashboard(details.dashboardUrl)}${fingerprint}\nStatus: ONLINE`;
 }
 export function adminOffline(deviceName = 'CV Automation'): string { return `CV AUTOMATION OFFLINE\nDevice: ${safe(deviceName)}\nStatus: OFFLINE`; }
 export function adminFailed(appId: string, error: unknown): string {

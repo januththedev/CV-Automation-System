@@ -11,7 +11,7 @@
     "cv-auto": "./dist/cli/cv-auto.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@azure/msal-node": "^2.16.2",
-    "better-sqlite3": "^11.3.0",
+    "better-sqlite3": "^12.11.1",
     "bullmq": "^5.34.5",
     "dotenv": "^16.4.5",
     "fastify": "^4.28.1",

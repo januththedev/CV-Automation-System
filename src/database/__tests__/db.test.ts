@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { execFile } from 'node:child_process';
@@ -32,6 +32,29 @@ describe('database', () => {
     db.closeDb(); db.getDb(file);
     expect(db.getApplicationById(app.id)).toEqual(app);
     expect(() => db.getDb(path.join(dir, 'other.db'))).toThrow();
+  });
+  it('persists settings and reads them back through a non-creating readonly connection', () => {
+    expect(db.getSetting(db.NOTIFICATION_NUMBER_KEY)).toBeNull();
+    db.setSetting(db.NOTIFICATION_NUMBER_KEY, '+94771234567');
+    expect(db.getSetting(db.NOTIFICATION_NUMBER_KEY)).toBe('+94771234567');
+    db.setSetting(db.NOTIFICATION_NUMBER_KEY, '947700000001');
+    expect(db.getSetting(db.NOTIFICATION_NUMBER_KEY)).toBe('947700000001');
+    // readSetting survives a reopen and never creates files or schema.
+    db.closeDb();
+    expect(db.readSetting(file, db.NOTIFICATION_NUMBER_KEY)).toBe('947700000001');
+    const missing = path.join(dir, 'absent.db');
+    expect(db.readSetting(missing, db.NOTIFICATION_NUMBER_KEY)).toBeNull();
+    expect(existsSync(missing)).toBe(false);
+    db.getDb(file);
+  });
+  it('checkpoints settings so strictly read-only readers see them while the runtime holds the DB open', () => {
+    const second = new BetterSqlite3(file);
+    try {
+      db.setSetting(db.NOTIFICATION_NUMBER_KEY, '947711223344');
+      expect(db.readSetting(file, db.NOTIFICATION_NUMBER_KEY)).toBe('947711223344');
+    } finally {
+      second.close();
+    }
   });
   it('reserves monotonic six-digit IDs and supports supplied reserved IDs', () => {
     const ids = Array.from({ length: 50 }, () => db.nextApplicationId());
@@ -103,9 +126,25 @@ describe('database', () => {
     db.updateApplication(result.application.id, { status: 'COMPLETED' });
     expect(db.listRecoveryApplications()).toHaveLength(1);
     db.updateApplication(result.application.id, { processed_revision: 1 });
+    expect(db.listRecoveryApplications()).toHaveLength(1);
+    db.updateApplication(result.application.id, { confirmation_sent: true });
     expect(db.listRecoveryApplications()).toEqual([]);
     db.recordInbound(msg('2', 1), 30);
     expect(db.listRecoveryApplications()).toHaveLength(1);
+  });
+  it('selects waiting details without documents and pages by id without starvation', () => {
+    const base = { whatsapp_jid: 'jid', whatsapp_number: number };
+    const waiting = db.createApplication({ ...base, status: 'WAITING_FOR_DETAILS', processed_revision: 1, revision: 2 });
+    const drained = db.createApplication({ ...base, status: 'COMPLETED', processed_revision: 3, revision: 3, confirmation_sent: true });
+    const waitingBare = db.createApplication({ ...base, status: 'WAITING_FOR_DETAILS' });
+    // A live RECEIVED session qualifies only with an unsent greeting (session row exists).
+    const reception = db.recordInbound({ ...msg('greet'), from_number: '+94770000001', from_jid: '94770000001@s.whatsapp.net' }, 30).application;
+    const listed = db.listRecoveryApplications(3);
+    expect(listed.map(r => r.id)).toEqual([waiting.id, waitingBare.id, reception.id]);
+    expect(db.listRecoveryApplications(2).map(r => r.id)).toEqual([waiting.id, waitingBare.id]);
+    expect(db.listRecoveryApplications(3, waitingBare.id).map(r => r.id)).toEqual([reception.id]);
+    expect(db.listRecoveryApplications(3, reception.id)).toEqual([]);
+    expect(drained.status).toBe('COMPLETED');
   });
   it('resets document checkpoints but retains sheet row for replacement CV', () => {
     const a = db.recordInbound(msg('1', 0, document), 30).application;
@@ -135,7 +174,6 @@ describe('database', () => {
     expect(db.listSessionMessages(number)).toHaveLength(1);
   });
   it('serializes concurrent process IDs and repeated inbound receipts', async () => {
-    copyFileSync(path.resolve('src/database/db.ts'), path.join(dir, 'db-under-test.ts'));
     const fixture = path.resolve('src/database/__tests__/fixtures/contention-child.cjs');
     const run = promisify(execFile);
     const results = await Promise.all(Array.from({ length: 3 }, () => run(process.execPath, ['--import', 'tsx', fixture], { cwd: dir, timeout: 25000 })));

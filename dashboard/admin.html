@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>CV Auto Admin</title>
+  <link rel="stylesheet" href="/admin/dashboard/app.css">
+</head>
+<body>
+  <main class="wrap">
+    <h1>CV Auto Admin</h1>
+    <section class="card" id="login-card">
+      <label for="admin-token">Admin token</label>
+      <input id="admin-token" type="password" autocomplete="off" spellcheck="false"
+        placeholder="Paste CV_ADMIN_TOKEN (kept in memory only)">
+      <button id="connect" type="button">Connect</button>
+      <p id="login-error" role="alert"></p>
+      <p>WhatsApp numbers come from metadata, separately from CV phone numbers. AI extracts data; it never controls the appliance.</p>
+      <p class="note">The token is held in this tab's memory only. It is never stored and never sent anywhere except this appliance.</p>
+    </section>
+    <section class="card" id="content-card" hidden>
+      <div class="row"><button id="refresh" type="button">Refresh</button><span id="error" role="status"></span></div>
+      <h2>Stats</h2>
+      <dl id="stats"></dl>
+      <h2>Providers (configured indicators, not live health)</h2>
+      <dl id="providers"></dl>
+      <h2>Applications</h2>
+      <table id="applications">
+        <thead><tr>
+          <th>ID</th><th>Created</th><th>WhatsApp</th><th>CV phone</th>
+          <th>Status</th><th>Review</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="row"><button id="disconnect" type="button">Disconnect</button></p>
+      <p class="row"><button id="prev" type="button">Prev</button><span id="page"></span><button id="next" type="button">Next</button></p>
+    </section>
+  </main>
+  <script src="/admin/dashboard/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+[Unit]
+Description=CV automation appliance (API + worker + Redis via docker compose)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/cv-auto
+ExecStart=/usr/bin/docker compose -f /opt/cv-auto/docker-compose.yml up -d
+ExecStop=/usr/bin/docker compose -f /opt/cv-auto/docker-compose.yml down
+# Updates and restarts must never erase config or candidate records: the
+# compose stack stores all state in ./data/cv-auto, which this unit leaves alone.
+ExecStartPre=/usr/bin/test -f /opt/cv-auto/docker-compose.yml
+
+[Install]
+WantedBy=multi-user.target

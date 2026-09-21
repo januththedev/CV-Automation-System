@@ -19,6 +19,15 @@ describe('business templates', () => {
     expect(adminReview('APP-1', ['name'])).toContain('name');
     expect(adminModelChanged('provider/old', 'provider/new')).toContain('provider/new');
   });
+  it('renders a strict-format SSH tunnel line and rejects anything else', () => {
+    const ok = adminOnline({ deviceName: 'd', ip: '1.2.3.4', sshHint: 'ssh admin@1.2.3.4', dashboardUrl: 'http://127.0.0.1:3001/admin/dashboard', sshTunnel: 'ssh -L 3001:127.0.0.1:3001 admin@1.2.3.4' });
+    expect(ok).toContain('Tunnel: ssh -L 3001:127.0.0.1:3001 admin@1.2.3.4');
+    for (const bad of ['ssh -L 3001:127.0.0.1:3001 admin@1.2.3.4; rm -rf /', 'scp file admin@1.2.3.4:/tmp', 'ssh -X admin@1.2.3.4']) {
+      const message = adminOnline({ deviceName: 'd', ip: '1.2.3.4', sshHint: 'ssh admin@1.2.3.4', dashboardUrl: 'http://127.0.0.1:3001', sshTunnel: bad });
+      expect(message).not.toContain('Tunnel:');
+      expect(message).not.toContain('rm -rf');
+    }
+  });
   it('never relays raw exception text or URL credentials', () => {
     const message = adminFailed('APP-1', new Error('Bearer super-private-token; client_secret=other-secret'));
     expect(message).toContain('APP-1'); expect(message).not.toMatch(/super-private-token|other-secret/);

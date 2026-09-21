@@ -1,11 +1,17 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import BetterSqlite3 from 'better-sqlite3';
 import type { WhatsAppConfig } from '../../contracts.js';
 import { formatAdminMessage, sendAdmin } from '../notify.js';
 
 vi.mock('../../config.js', () => ({ loadConfig: vi.fn(() => ({ whatsapp: null, adminWhatsappNumber: null })) }));
 import { loadConfig } from '../../config.js';
 const cfg: WhatsAppConfig = { accessToken: ['not', 'a', 'token'].join('-'), phoneNumberId: '123', wabaId: '456', verifyToken: ['not', 'a', 'verify'].join('-') };
-afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
+let dir: string;
+beforeEach(() => { dir = mkdtempSync(path.join(fileURLToPath(new URL('.', import.meta.url)), 'tmp-notify-')); });
+afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); rmSync(dir, { recursive: true, force: true }); });
 
 describe('admin notifications', () => {
   it('formats online, offline, failure, review and model events', () => {
@@ -28,6 +34,24 @@ describe('admin notifications', () => {
     const fetch = vi.fn().mockResolvedValue(new Response('{}')); vi.stubGlobal('fetch', fetch);
     await sendAdmin({ type: 'offline' });
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it('prefers the notification number persisted in the database over configuration', async () => {
+    const dbFile = path.join(dir, 'applications.db');
+    const conn = new BetterSqlite3(dbFile);
+    conn.exec('CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+    conn.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('notification_number', '947700000001');
+    conn.close();
+    vi.mocked(loadConfig).mockReturnValueOnce({ whatsapp: cfg, adminWhatsappNumber: '94771234567', dataDir: dir } as ReturnType<typeof loadConfig>);
+    const fetch = vi.fn().mockResolvedValue(new Response('{}')); vi.stubGlobal('fetch', fetch);
+    await sendAdmin({ type: 'offline' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toMatchObject({ to: '947700000001' });
+  });
+  it('reads no database when the database file is absent', async () => {
+    vi.mocked(loadConfig).mockReturnValueOnce({ whatsapp: cfg, adminWhatsappNumber: null, dataDir: dir } as ReturnType<typeof loadConfig>);
+    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+    await sendAdmin({ type: 'offline' });
+    expect(fetch).not.toHaveBeenCalled();
   });
   it('no-ops when config or admin number is unset', async () => {
     const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);

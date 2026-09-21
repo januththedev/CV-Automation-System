@@ -1,0 +1,19 @@
+[Unit]
+Description=CV automation dashboard kiosk (Chromium)
+After=cv-auto.service graphical-session.target
+Wants=cv-auto.service
+# Kiosk is optional: when the appliance has no display, this unit simply fails
+# harmlessly and the rest of the appliance keeps running.
+
+[Service]
+User=kiosk
+# Minimal X session: no window manager, no desktop, just the dashboard.
+ExecStartPre=/usr/bin/xset -display :0 s off -dpms
+ExecStart=/usr/bin/chromium --kiosk --noerrdialogs --disable-infobars \
+  --disable-session-crashed-bubble --no-first-run \
+  http://127.0.0.1:3001/admin/dashboard
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target

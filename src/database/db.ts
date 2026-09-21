@@ -290,9 +290,28 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 2,
+    up: (conn) => {
+      conn.exec(`
+        CREATE TABLE IF NOT EXISTS settings (
+          key   TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+      `);
+    },
+  },
 ];
 
 const KEY_SCHEMA_VERSION = 'schema_version';
+
+/** Valid application statuses for runtime guards. */
+const STATUS_SET: ReadonlySet<string> = new Set<string>([
+  'RECEIVED', 'IDENTIFYING_CANDIDATE', 'WAITING_FOR_DETAILS', 'DOCUMENT_RECEIVED',
+  'DOWNLOADING', 'AI_PROCESSING', 'VALIDATING', 'DUPLICATE_CHECK',
+  'UPLOADING_TO_ONEDRIVE', 'CREATING_LINK', 'WRITING_TO_GOOGLE_SHEETS',
+  'COMPLETED', 'NEEDS_REVIEW', 'RETRY_PENDING', 'FAILED',
+]);
 
 interface CountersRow {
   key: string;
@@ -427,7 +446,7 @@ let dbPath: string | null = null;
 /** Default DB location: SQLITE_PATH or DATA_DIR/applications.db (dev: ./data/cv-auto). */
 function defaultDbPath(): string {
   if (process.env.SQLITE_PATH) return process.env.SQLITE_PATH;
-  const dataDir = process.env.DATA_DIR || './data/cv-auto';
+  const dataDir = process.env.CV_DATA_DIR || process.env.DATA_DIR || './data/cv-auto';
   return path.join(dataDir, 'applications.db');
 }
 
@@ -498,6 +517,58 @@ export function closeDb(): void {
 // Application ID counter
 // ---------------------------------------------------------------------------
 
+/**
+ * Persisted appliance settings (schema version 2). The notification number is
+ * stored here so every admin notice follows the number the operator chose at
+ * setup, independent of container environment overrides.
+ */
+export const NOTIFICATION_NUMBER_KEY = 'notification_number';
+
+export function setSetting(key: string, value: string): void {
+  const conn = getDb();
+  conn
+    .prepare(
+      'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+    )
+    .run(key, value);
+  // Checkpoint immediately: strictly read-only readers (the private admin
+  // runtime, notifications) cannot see uncheckpointed WAL frames while the
+  // runtime connection keeps the database open.
+  conn.pragma('wal_checkpoint(TRUNCATE)');
+}
+
+export function getSetting(key: string): string | null {
+  const conn = getDb();
+  const row = conn.prepare('SELECT value FROM settings WHERE key = ?').get(key) as
+    | { value: string }
+    | undefined;
+  return row ? row.value : null;
+}
+
+/**
+ * Read a setting through a strictly read-only connection that never creates
+ * the database file or its schema. Returns null when the file is absent or
+ * the table has not been migrated yet.
+ */
+export function readSetting(dbPath: string, key: string): string | null {
+  if (!dbPath || !fs.existsSync(dbPath)) return null;
+  try {
+    const conn = new BetterSqlite3(dbPath, { readonly: true, fileMustExist: true });
+    try {
+      const row = conn.prepare('SELECT value FROM settings WHERE key = ?').get(key) as
+        | { value: string }
+        | undefined;
+      return row ? row.value : null;
+    } catch {
+      return null;
+    } finally {
+      conn.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
 /** Stable application id: APP-YYYY-NNNNNN (six digits, transaction-safe). */
 export function nextApplicationId(): string {
   const conn = getDb();
@@ -531,6 +602,43 @@ const APP_COLUMNS = `
   cv_local_path, confirmation_sent, media_id, cv_filename, cv_mime_type,
   extraction_json, session_id, duplicate_of, revision, processed_revision
 `;
+
+/** Column list for read-only consumers that must not import the writer repo. */
+export const APPLICATION_COLUMNS = APP_COLUMNS;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isRawAppRow(value: Record<string, unknown>): boolean {
+  return (
+    typeof value.id === 'string' &&
+    typeof value.created_at === 'string' &&
+    typeof value.updated_at === 'string' &&
+    typeof value.whatsapp_jid === 'string' &&
+    typeof value.whatsapp_number === 'string' &&
+    typeof value.status === 'string' &&
+    STATUS_SET.has(value.status) &&
+    (value.review === 0 || value.review === 1) &&
+    (value.confirmation_sent === 0 || value.confirmation_sent === 1) &&
+    typeof value.revision === 'number' &&
+    typeof value.processed_revision === 'number'
+  );
+}
+
+/** Runtime guard for rows read through direct (non-repo) connections. */
+export function isDatabaseApplication(value: unknown): boolean {
+  return isRecord(value) && isRawAppRow(value);
+}
+
+/**
+ * Validate and convert one raw row (numeric flags) into the canonical record;
+ * returns null when the row shape is not an application.
+ */
+export function toDatabaseApplication(value: unknown): DatabaseApplication | null {
+  if (!isRecord(value) || !isRawAppRow(value)) return null;
+  return rowToApplication(value as unknown as AppRow);
+}
 
 const INSERT_APPLICATION_SQL = `
   INSERT INTO applications (
@@ -977,19 +1085,31 @@ export function getPendingWorkByMessageId(waMessageId: string): PendingWork | nu
 }
 
 /**
- * Document-bearing applications whose latest revision the worker has not yet
- * persisted as handled — the safety net when Redis loses dispatched jobs.
+ * Unhandled document revisions and candidate messages recoverable after Redis loss.
+ * The ID cursor remains valid when earlier rows cease to qualify during processing.
  */
-export function listRecoveryApplications(limit?: number): DatabaseApplication[] {
+export function listRecoveryApplications(limit?: number, afterId = ''): DatabaseApplication[] {
   const rows = getDb()
     .prepare(
       `SELECT ${APP_COLUMNS} FROM applications
-       WHERE (media_id IS NOT NULL OR cv_local_path IS NOT NULL)
-         AND revision > processed_revision
-       ORDER BY created_at, id
+       WHERE id > ? AND ((
+         (media_id IS NOT NULL OR cv_local_path IS NOT NULL)
+           AND revision > processed_revision
+       ) OR (
+         status = 'WAITING_FOR_DETAILS'
+       ) OR (
+         status = 'COMPLETED' AND confirmation_sent = 0
+       ) OR (
+         status = 'RECEIVED' AND media_id IS NULL AND cv_local_path IS NULL
+           AND revision > processed_revision
+           AND EXISTS (SELECT 1 FROM sessions s
+             WHERE s.whatsapp_number = applications.whatsapp_number
+               AND s.application_id = applications.id AND s.greeting_sent = 0)
+       ))
+       ORDER BY id
        LIMIT ?`,
     )
-    .all(clampLimit(limit, 100, 1000)) as AppRow[];
+    .all(afterId, clampLimit(limit, 100, 1000)) as AppRow[];
   return rows.map(rowToApplication);
 }
 

@@ -9,12 +9,22 @@ services:
     ports:
       # Dashboard/API stay private to the host; a reverse proxy owns the public HTTPS webhook.
       - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    env_file:
+      - path: ./data/cv-auto/config/runtime.env
+        format: raw
+        required: false
     environment:
       - NODE_ENV=production
       - CV_CONFIG_DIR=/data/config
       - CV_DATA_DIR=/data/data
       - CV_LOG_DIR=/data/logs
       - CV_REDIS_URL=redis://redis:6379
+      - CV_API_HOST=0.0.0.0
     volumes:
       - ./data/cv-auto:/data
     depends_on:
@@ -27,6 +37,10 @@ services:
       target: worker
     container_name: cv-auto-worker
     restart: unless-stopped
+    env_file:
+      - path: ./data/cv-auto/config/runtime.env
+        format: raw
+        required: false
     environment:
       - NODE_ENV=production
       - CV_CONFIG_DIR=/data/config
@@ -37,6 +51,35 @@ services:
       - ./data/cv-auto:/data
     depends_on:
       - redis
+
+  admin:
+    # Private read-only management API + dashboard. Same image as api; fails
+    # closed unless CV_ADMIN_TOKEN is set. Host-side publishing stays on
+    # 127.0.0.1 so the surface never leaves the appliance.
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    container_name: cv-auto-admin
+    restart: unless-stopped
+    command: ["node", "dist/api/admin-server.js"]
+    env_file:
+      - path: ./data/cv-auto/config/runtime.env
+        format: raw
+        required: false
+    environment:
+      - NODE_ENV=production
+      - CV_CONFIG_DIR=/data/config
+      - CV_DATA_DIR=/data/data
+      - CV_ADMIN_HOST=0.0.0.0
+      - CV_ADMIN_PORT=3001
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - ./data/cv-auto:/data
+    depends_on:
+      api:
+        condition: service_healthy
 
   redis:
     image: redis:7-alpine

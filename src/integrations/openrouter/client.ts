@@ -1,5 +1,6 @@
 import { loadConfig } from '../../config.js';
 import type { OpenRouterConfig } from '../../contracts.js';
+import { isPublicHost } from '../../network/url-guard.js';
 
 export const DEFAULT_MODEL = 'google/gemini-3.8-flash';
 const MAX_CHAT_BYTES = 65_536;
@@ -32,6 +33,11 @@ function config(explicit?: OpenRouterConfig): OpenRouterConfig {
   const url = new URL(cfg.baseUrl ?? 'https://openrouter.ai/api/v1');
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
     throw new OpenRouterError('OpenRouter base URL must be HTTPS without credentials or query');
+  }
+  // Config-supplied URL: reject loopback/private/reserved literal hosts before
+  // any request. The resolving check runs at fetch time via assertPublicHttpUrl.
+  if (!isPublicHost(url.hostname)) {
+    throw new OpenRouterError('OpenRouter base URL host must be a public address');
   }
   return { ...cfg, model, baseUrl: url.toString().replace(/\/$/, '') };
 }
