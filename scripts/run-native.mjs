@@ -219,12 +219,15 @@ function httpOk(url) {
 
 async function waitForStack() {
   const apiPort = process.env.CV_API_PORT ?? '3000';
-  const adminPort = process.env.CV_ADMIN_PORT ?? '3001';
   for (let attempt = 0; attempt < 15; attempt += 1) {
-    if (httpOk(`http://127.0.0.1:${apiPort}/health`) && httpOk(`http://127.0.0.1:${adminPort}/admin/dashboard`)) return true;
+    if (httpOk(`http://127.0.0.1:${apiPort}/health`)) return true;
     await sleep(1000);
   }
   return false;
+}
+
+function tailLogs(names) {
+  return names.map((name) => `--- logs/${name} ---\n${tailLog(name)}`).join('\n');
 }
 
 function tailLog(name) {
@@ -269,13 +272,28 @@ async function start() {
   ensureRedis();
   startService('worker/index.js', 'worker.log');
   startService('api/index.js', 'api.log');
-  startService('api/admin-server.js', 'admin.log');
-
-  console.log('Waiting for the stack to answer...');
+  // The admin runtime fail-closes until the database file exists, so it starts
+  // only after the API is up (the API creates the schema on first open).
+  console.log('Waiting for the API to answer...');
   if (!(await waitForStack())) {
-    console.error('\nThe appliance did not come up. Last 20 log lines:\n');
-    console.error(tailLog('api.log'));
-    console.error('\nCommon causes: port 3000 or 3001 already in use, or a bad configuration.');
+    console.error('\nThe API did not come up. Last 20 log lines:\n');
+    console.error(tailLogs(['api.log', 'worker.log']));
+    console.error('\nCommon causes: port 3000 already in use, or a bad configuration.');
+    process.exitCode = 1;
+    rl.close();
+    return;
+  }
+  startService('api/admin-server.js', 'admin.log');
+  console.log('Waiting for the admin panel to answer...');
+  const adminPort = process.env.CV_ADMIN_PORT ?? '3001';
+  for (let attempt = 0; attempt < 15; attempt += 1) {
+    if (httpOk(`http://127.0.0.1:${adminPort}/admin/dashboard`)) break;
+    await sleep(1000);
+  }
+  if (!httpOk(`http://127.0.0.1:${adminPort}/admin/dashboard`)) {
+    console.error('\nThe admin panel did not come up. Last 20 log lines:\n');
+    console.error(tailLogs(['admin.log', 'api.log']));
+    console.error('\nCommon causes: port 3001 already in use, or a missing CV_ADMIN_TOKEN.');
     process.exitCode = 1;
     rl.close();
     return;
