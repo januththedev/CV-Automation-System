@@ -228,6 +228,23 @@ describe('admin runtime', () => {
     expect(process.listenerCount('SIGINT')).toBe(before);
   });
 
+  it('follows CV_ADMIN_HOST only when explicitly overridden, and compose keeps host ports on loopback', async () => {
+    vi.stubEnv('CV_ADMIN_TOKEN', 'runtime-admin-token-0123456789');
+    // The container runtime intentionally binds 0.0.0.0 inside its namespace;
+    // the compose host mapping is what keeps the surface private.
+    vi.stubEnv('CV_ADMIN_HOST', '0.0.0.0');
+    const runtime = await startAdminRuntime({ config: { ...config, dataDir: dir }, port: 0 });
+    try {
+      expect(runtime.server.server.address()).toMatchObject({ address: '0.0.0.0' });
+    } finally { await runtime.stop(); }
+    const compose = fs.readFileSync(path.resolve('docker-compose.yml'), 'utf8');
+    for (const port of ['127.0.0.1:3000:3000', '127.0.0.1:3001:3001']) {
+      expect(compose).toContain(port);
+    }
+    // No compose port is published on a non-loopback host address.
+    expect(compose).not.toMatch(/"0\.0\.0\.0:\d+:\d+"/);
+  });
+
   it('fails closed when CV_ADMIN_TOKEN is missing or trivially weak', async () => {
     vi.stubEnv('CV_ADMIN_TOKEN', '');
     await expect(startAdminRuntime({ config: { ...config, dataDir: dir } })).rejects.toThrow();

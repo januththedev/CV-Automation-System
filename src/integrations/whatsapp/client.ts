@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import type { InboundMessage, WhatsAppClientApi, WhatsAppConfig } from '../../contracts.js';
+import { assertPublicHttpUrl } from '../../network/url-guard.js';
 
 const TIMEOUT_MS = 30_000;
 const MAX_ATTEMPTS = 4;
@@ -12,6 +13,9 @@ function graphBase(cfg: WhatsAppConfig): string {
 
 /** Bounds fetch AND body consumption. Never include response bodies or tokens in errors. */
 async function request<T>(cfg: WhatsAppConfig, url: string, init: RequestInit, consume: (response: Response) => Promise<T>): Promise<T> {
+  // Every outbound URL (including provider-supplied media URLs) must pass the
+  // host guard BEFORE the bearer token is attached and before any request.
+  await assertPublicHttpUrl(url);
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);

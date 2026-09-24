@@ -220,9 +220,9 @@ node scripts/verify-integrations.mjs check --allow-live
 
 | Environment | Result |
 |---|---|
-| Windows 10 dev host | typecheck + tests + build — full suite green (1 Redis-gated skip) |
-| Debian 12 container | **full suite 0 skipped** with live Redis |
-| Alpine (musl) container | **full suite 0 skipped** with live Redis |
+| Windows 10 dev host | typecheck + tests + build — 291 passed / 1 Redis-gated skip (292 total) |
+| Debian 12 container | **292 passed / 0 skipped** with live Redis |
+| Alpine (musl) container | **292 passed / 0 skipped** with live Redis |
 | **Headless Kali rolling (native, no Docker inside)** | redis + api + worker + admin as real processes: health, handshake, signed webhook accepted, tampered 403, admin auth, dashboard, CLI status, notification attempt (delivery needs real credentials) |
 | Production images (api, worker) | compose smoke over real HTTP: health, handshake, signed/replay/tampered/unsigned webhook, admin auth, dashboard, CLI, worker, notification-number persistence |
 
@@ -246,6 +246,8 @@ for your deployment.
 
 ## 📚 Further reading
 
+- [docs/REQUIREMENTS-CHECKLIST.md](docs/REQUIREMENTS-CHECKLIST.md) — every requirement, its status and its evidence
 - [docs/DEPLOY.md](docs/DEPLOY.md) — services, systemd, updates, full matrix
 - [docs/CONFIG.md](docs/CONFIG.md) — every environment variable and its rules
+- [docs/CREDENTIALS.md](docs/CREDENTIALS.md) — where to get each credential
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — flow, invariants, limits

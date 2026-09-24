@@ -165,6 +165,32 @@ describe('database', () => {
     db.updateApplication(a.id, { cv_file_hash: 'a'.repeat(64) });
     expect(db.findDuplicate(b.id)?.id).toBe(a.id);
   });
+  it('keeps the WhatsApp number and the CV phone number as separate fields even when identical', () => {
+    const shared = '+94771234567';
+    const a = db.createApplication({ whatsapp_jid: 'jid', whatsapp_number: shared, cv_phone_number: shared, name: 'Same' });
+    const b = db.createApplication({ whatsapp_jid: 'jid', whatsapp_number: shared, cv_phone_number: shared, name: 'Same' });
+    for (const row of [a, b, db.getApplicationById(a.id)!, db.getApplicationById(b.id)!]) {
+      expect(row.whatsapp_number).toBe(shared);
+      expect(row.cv_phone_number).toBe(shared);
+    }
+    // Equality of both numbers alone is never a duplicate signal.
+    expect(db.findDuplicate(b.id)).toBeNull();
+  });
+  it('never treats malformed NIC or hash values as duplicate evidence', () => {
+    const a = db.createApplication({ whatsapp_jid: 'jid', whatsapp_number: number, name: 'Same Name' });
+    const b = db.createApplication({ whatsapp_jid: 'jid', whatsapp_number: number, name: 'Same Name' });
+    // NIC_RE: exactly 9 digits + V/X, or 12 digits. Everything else is invalid.
+    for (const badNic of ['not-a-nic', '123', '', '123456789Z', '0'.repeat(20), '1234567890V']) {
+      db.updateApplication(a.id, { nic: badNic });
+      db.updateApplication(b.id, { nic: badNic });
+      expect(db.findDuplicate(b.id)).toBeNull();
+    }
+    for (const badHash of ['not-a-hash', 'ZZ'.repeat(32), 'a'.repeat(63), '']) {
+      db.updateApplication(a.id, { cv_file_hash: badHash });
+      db.updateApplication(b.id, { cv_file_hash: badHash });
+      expect(db.findDuplicate(b.id)).toBeNull();
+    }
+  });
   it('low-level message and session helpers preserve their limited responsibilities', () => {
     const a = db.createApplication({ whatsapp_jid: 'jid', whatsapp_number: number });
     db.upsertSession({ whatsapp_number: number, application_id: a.id, updated_at: msg('x').timestamp, greeting_sent: false });

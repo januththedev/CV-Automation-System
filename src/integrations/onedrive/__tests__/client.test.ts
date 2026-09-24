@@ -3,6 +3,14 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { OneDriveClient } from '../client.js';
 
+// The resolving guard is covered in url-guard.test.ts; only the resolving check
+// is mocked pass-through here so these transport tests stay hermetic.
+const guard = vi.hoisted(() => ({ assertPublicHttpUrl: vi.fn(async (url: string) => new URL(url)) }));
+vi.mock('../../../network/url-guard.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../network/url-guard.js')>();
+  return { ...actual, assertPublicHttpUrl: guard.assertPublicHttpUrl };
+});
+
 const dir = path.resolve('src/integrations/onedrive/__tests__/.client-temp');
 const cfg = { clientId: 'client', folderRoot: 'CV Applications', tokenCachePath: path.join(dir, 'cache.json') };
 const json = (data: unknown, status = 200, headers = {}) => new Response(JSON.stringify(data), { status, headers });
@@ -12,7 +20,11 @@ function setup() {
   const client = new OneDriveClient(cfg, { fetch, sleep, tokenProvider: { getAccessToken: async () => 'secret' }, timeoutMs: 10 });
   return { fetch, sleep, client };
 }
-afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+afterEach(async () => {
+  await rm(dir, { recursive: true, force: true });
+  guard.assertPublicHttpUrl.mockClear();
+  guard.assertPublicHttpUrl.mockImplementation(async (url: string) => new URL(url));
+});
 async function file(size: number) { await mkdir(dir, { recursive: true }); const name = path.join(dir, 'cv.pdf'); await writeFile(name, Buffer.alloc(size, 7)); return name; }
 
 describe('OneDriveClient', () => {
@@ -77,6 +89,19 @@ describe('OneDriveClient', () => {
     fetch.mockResolvedValueOnce(json({}, 503)).mockRejectedValueOnce(Object.assign(new Error('private'), { name: 'TimeoutError' })).mockResolvedValueOnce(json({ link: { webUrl: 'https://1drv.ms/view' } }));
     expect(await client.createShareLink('id')).toBe('https://1drv.ms/view');
     expect(sleep.mock.calls.map(c => c[0])).toEqual([500, 1000]);
+  });
+  it('refuses a provider upload-session URL whose host the guard blocks, before any CV bytes are sent', async () => {
+    const { client, fetch } = setup();
+    const size = 4 * 1024 * 1024 + 1;
+    fetch.mockResolvedValueOnce(json({ uploadUrl: 'https://internal.example/session' }));
+    guard.assertPublicHttpUrl.mockImplementation(async (url: string) => {
+      if (new URL(url).hostname === 'internal.example') throw new Error('Request URL host is not a public address');
+      return new URL(url);
+    });
+    await expect(client.uploadFile(await file(size), 'folder/cv.pdf')).rejects.toThrow('invalid upload session URL');
+    // Only the createUploadSession call went out; no chunk was transmitted.
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][0]).toContain('/createUploadSession');
   });
   it('rejects path traversal before network calls', async () => {
     const { client, fetch } = setup();

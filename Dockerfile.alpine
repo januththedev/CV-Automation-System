@@ -8,4 +8,5 @@ RUN npm ci
 
 FROM deps
 COPY . .
-CMD ["sh", "-c", "npm run typecheck && npm test && npm run build"]
+# Build first: some suites (db-set-setting) exercise the compiled output.
+CMD ["sh", "-c", "npm run build && npm run typecheck && npm test"]

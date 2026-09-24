@@ -57,10 +57,13 @@ worker (BullMQ over Redis AOF)
 
 ## Verification limits (honest)
 
-- **Verified:** full unit/integration suite (236 tests) green on Debian 12 and
-  Alpine with live Redis; production-image smoke over real HTTP (handshake,
-  signed/tampered/unsigned/replay webhook, admin auth, dashboard, CLI, worker);
-  systemd units validated; configure contract on Kali; Node-24 crash fixed.
+- **Verified:** full unit/integration suite (292 tests: 291 passed / 1
+  Redis-gated skip on the dev host; **292/292** inside both the Debian 12 and
+  Alpine Linux containers with a live Redis); production-image smoke over real
+  HTTP (handshake, signed/tampered/unsigned/replay webhook, admin auth,
+  dashboard, CLI, worker); systemd units validated; configure contract on Kali;
+  Node-24 crash fixed. Suite size is re-measured on every full gate; the
+  authoritative count lives in [REQUIREMENTS-CHECKLIST.md](REQUIREMENTS-CHECKLIST.md).
 - **Not verified:** live delivery to WhatsApp/Google Sheets/OneDrive/OpenRouter
   with real credentials (no real account was used — synthetic credentials can
   never reach the providers); a real Kali bare-metal deployment; kiosk on a

@@ -91,15 +91,15 @@ git pull && docker compose build && docker compose up -d
 Never delete `data/cv-auto`. All candidate records, configuration, and tokens
 live there; updating images does not touch them.
 
-## Environment verification matrix (2026-09-21)
+## Environment verification matrix (2026-09-24, re-measured on every full gate)
 
 | Environment | What ran | Result |
 |---|---|---|
-| Windows 10 dev host (Node 24) | `npm run typecheck`, `npm test`, `npm run build` | 235 passed / 1 skipped (Redis-gated), green |
-| Debian 12 container (`node:20-bookworm-slim`, cv-auto:test) | typecheck + full suite + build, with live redis:7-alpine | **236 passed / 0 skipped** |
-| Alpine (musl) container (`node:20-alpine`, cv-auto:alpine-test) | typecheck + full suite + build, with live redis:7-alpine | **236 passed / 0 skipped** |
-| Kali rolling container (Node 24.19, npm 11) | typecheck + full suite + build; Redis roundtrip; `systemd-analyze verify`; configure contract (negative/positive/overwrite-refusal) | 235 passed / 1 skipped (Redis-gated); gated test passed separately against live redis:7-alpine; units exit 0; configure contract all correct |
-| Production images (cv-auto:api, cv-auto:worker, Debian 12 base) | compose stack with synthetic credentials: health, handshake, signed webhook, replay dedup, tamper 403, unsigned 403, admin bearer/query-token/write-verb, dashboard shell, CLI status, worker startup | All checks passed |
+| Windows 10 dev host (Node 24) | `npm run typecheck`, `npm test`, `npm run build` | 291 passed / 1 skipped (Redis-gated) = 292 total, green |
+| Debian 12 container (`node:20-bookworm-slim`, cv-auto:test) | typecheck + full suite + build, with live redis:7-alpine | **292 passed / 0 skipped** |
+| Alpine (musl) container (`node:20-alpine`, cv-auto:alpine-test) | build + typecheck + full suite, with live redis:7-alpine | **292 passed / 0 skipped** |
+| Kali rolling container (Node 24.19, npm 11) | full suite; Redis roundtrip against live redis:7-alpine; `systemd-analyze verify`; configure contract; launcher end-to-end with scripted answers | all green; units exit 0; launcher: install → prompts → save → start → banner → stop |
+| Production images (cv-auto:api, cv-auto:worker, Debian 12 base) | compose stack with synthetic credentials: health, handshake, signed webhook, replay dedup, tamper 403, unsigned 403, admin bearer/query-token/write-verb, dashboard shell, CLI status, worker startup, notification-number persistence (stored readback) | All checks passed |
 | **Headless Kali rolling (native processes, no Docker inside)** | redis-server + `dist/worker` + `dist/api` + `dist/api/admin-server.js` as real processes with synthetic credentials: health, handshake, signed webhook accepted, tampered 403, admin auth, dashboard 200, CLI status, "CV AUTOMATION ONLINE" notification attempted (generic scrubbed failure — synthetic token cannot reach WhatsApp) | All checks passed; delivery requires real credentials |
 
 On startup (`bash setup.sh --start`), the appliance prints a display banner and

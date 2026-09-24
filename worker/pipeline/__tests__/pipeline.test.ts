@@ -258,6 +258,14 @@ describe('document queue pipeline', () => {
     expect(pending[0].data.purpose).toBe(purpose);
     await drain();
     expect(mocks.send).toHaveBeenCalledTimes(2);
+    // Queue loss after the document stage completed must NOT repeat the
+    // external side effects: one download, one upload, one link, one sheet row.
+    if (purpose === 'confirmation') {
+      expect(mocks.download).toHaveBeenCalledTimes(1);
+      expect(mocks.upload).toHaveBeenCalledTimes(1);
+      expect(mocks.link).toHaveBeenCalledTimes(1);
+      expect(mocks.row).toHaveBeenCalledTimes(1);
+    }
     await processors['cv-processing'](job({ applicationId: app.id }));
     expect(pending).toHaveLength(0);
   });

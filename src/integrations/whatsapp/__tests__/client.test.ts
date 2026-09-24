@@ -2,13 +2,22 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WhatsAppConfig } from '../../../contracts.js';
 import { WhatsAppClient, downloadMedia, parseWebhookPayload, verifyWebhook } from '../client.js';
 
+// The host guard is exercised in its own suite; only the resolving check is
+// mocked pass-through here so the Graph tests stay hermetic (no real DNS).
+// isPublicHost stays REAL.
+const guard = vi.hoisted(() => ({ assertPublicHttpUrl: vi.fn(async (url: string) => new URL(url)) }));
+vi.mock('../../../network/url-guard.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../network/url-guard.js')>();
+  return { ...actual, assertPublicHttpUrl: guard.assertPublicHttpUrl };
+});
+
 const dummyToken = ['test', 'not', 'a', 'secret'].join('-');
 const dummyVerify = ['verify', 'not', 'a', 'secret'].join('-');
 const cfg: WhatsAppConfig = { accessToken: dummyToken, phoneNumberId: '123', wabaId: '456', verifyToken: dummyVerify };
 const envelope = (messages: unknown[], extra = {}) => ({ object: 'whatsapp_business_account', entry: [{ changes: [{ field: 'messages', value: { metadata: { display_phone_number: '999999999', phone_number_id: '123' }, contacts: [{ wa_id: '11111111', profile: { name: '+22222222' } }], messages, ...extra } }] }] });
 const text = { id: 'wamid.text', from: '94771234567', timestamp: '1700000000', type: 'text', text: { body: 'My number is +333333333' } };
 const document = { id: 'wamid.doc', from: '+94 77 123 4567@s.whatsapp.net', timestamp: '1700000001', type: 'document', document: { id: 'media123', mime_type: 'application/pdf', filename: 'CV.pdf', caption: 'Please consider my application.' } };
-afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); guard.assertPublicHttpUrl.mockClear(); guard.assertPublicHttpUrl.mockImplementation(async (url: string) => new URL(url)); });
 
 describe('webhook metadata parsing', () => {
   it('parses text using only the envelope message from metadata', () => {
@@ -65,6 +74,28 @@ describe('Graph client', () => {
     const fetch = vi.fn().mockResolvedValueOnce(Response.json({ url: 'http://example.com/media' })); vi.stubGlobal('fetch', fetch);
     await expect(downloadMedia(cfg, 'media')).rejects.toThrow('media URL');
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it('refuses a provider-supplied media URL whose host the guard blocks, before attaching the token', async () => {
+    const fetch = vi.fn().mockImplementation(async () => Response.json({ url: 'https://internal.example/media', mime_type: 'application/pdf' }));
+    vi.stubGlobal('fetch', fetch);
+    guard.assertPublicHttpUrl.mockImplementation(async (url: string) => {
+      if (new URL(url).hostname === 'internal.example') throw new Error('Request URL host is not a public address');
+      return new URL(url);
+    });
+    // The message is a fixed string: the blocked host, tokens and body never leak.
+    const error = await downloadMedia(cfg, 'media').catch((e: Error) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe('Request URL host is not a public address');
+    expect((error as Error).message).not.toContain('internal.example');
+    // Only the metadata call (graph.facebook.com) went out; no bytes, no token to the blocked host.
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][0]).toBe('https://graph.facebook.com/v21.0/media');
+    expect(guard.assertPublicHttpUrl).toHaveBeenCalledWith('https://internal.example/media');
+  });
+  it('validates every outbound URL through the host guard', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response('{}')); vi.stubGlobal('fetch', fetch);
+    await new WhatsAppClient(cfg).sendText('+94771234567', 'Thanks.');
+    expect(guard.assertPublicHttpUrl).toHaveBeenCalledWith('https://graph.facebook.com/v21.0/123/messages');
   });
   it('retries 429 and 5xx with exponential backoff', async () => {
     vi.useFakeTimers();

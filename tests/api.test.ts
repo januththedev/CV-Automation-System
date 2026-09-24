@@ -72,6 +72,29 @@ describe('bounded webhook API', () => {
     expect(database.getSession('+94771234567')?.greeting_sent).toBe(false);
   });
 
+  it('logs only a fixed operation string on internal failure — never the secret, signature or body', async () => {
+    const loggerError = vi.fn();
+    vi.doMock('../src/logger.js', () => ({ logger: { error: loggerError } }));
+    try {
+      await build();
+      conn.exec(`CREATE TRIGGER fail_message BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'db down'); END;`);
+      const body = payload();
+      const sig = signature(body);
+      const result = await post(body, sig);
+      expect(result.statusCode).toBe(500);
+      expect(result.json()).toEqual({ error: 'Internal Server Error' });
+      // logFailure imports the logger lazily (fire-and-forget); let it settle.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(loggerError).toHaveBeenCalledTimes(1);
+      const logged = JSON.stringify(loggerError.mock.calls[0]);
+      expect(loggerError.mock.calls[0][0]).toEqual({ operation: 'ingest' });
+      expect(logged).not.toContain(secret);
+      expect(logged).not.toContain(sig);
+      expect(logged).not.toContain('wamid');
+      expect(logged).not.toContain('Private candidate');
+    } finally { vi.doUnmock('../src/logger.js'); }
+  });
+
   it('treats candidate URLs as text without outbound network access', async () => {
     await build();
     const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected network access'));

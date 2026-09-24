@@ -1,6 +1,6 @@
 import { loadConfig } from '../../config.js';
 import type { OpenRouterConfig } from '../../contracts.js';
-import { isPublicHost } from '../../network/url-guard.js';
+import { assertPublicHttpUrl, isPublicHost } from '../../network/url-guard.js';
 
 export const DEFAULT_MODEL = 'google/gemini-3.8-flash';
 const MAX_CHAT_BYTES = 65_536;
@@ -69,6 +69,10 @@ async function request(cfg: OpenRouterConfig, route: string, body: unknown, limi
   const timeoutMs = integer(options.timeoutMs, 120_000, 1, 120_000);
   const retries = integer(options.maxRetries, 2, 0, 2);
   const delay = integer(options.retryDelayMs, 500, 0, 5_000);
+  // The base URL is configurable: verify the resolved host is public before
+  // the API key is ever attached. The error never echoes the URL.
+  try { await assertPublicHttpUrl(`${cfg.baseUrl}${route}`); }
+  catch { throw new OpenRouterError('OpenRouter endpoint host must resolve to a public address'); }
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {

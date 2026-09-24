@@ -25,6 +25,10 @@ COPY cli ./cli
 COPY dashboard ./dashboard
 COPY scripts ./scripts
 COPY setup.sh ./
+# Deployment artifacts are copied for the in-image test gate only
+# (tests assert they never mutate SSH/firewall and keep ports on loopback).
+COPY docker-compose.yml ./
+COPY systemd ./systemd
 RUN npm run build
 
 FROM build AS test

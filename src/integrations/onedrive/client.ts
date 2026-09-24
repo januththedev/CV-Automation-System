@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { OneDriveClientApi, OneDriveConfig } from '../../contracts.js';
 import { MsalTokenProvider, type TokenProvider } from './auth.js';
 import { defaultSleep, GraphHttpError, requestWithRetry, type FetchLike, type Sleep } from './http.js';
+import { assertPublicHttpUrl } from '../../network/url-guard.js';
 
 export const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const SIMPLE_LIMIT = 4 * 1024 * 1024;
@@ -71,6 +72,10 @@ export class OneDriveClient implements OneDriveClientApi {
       try { uploadUrl = new URL(session?.uploadUrl); }
       catch { throw new Error('OneDrive did not return a valid upload session.'); }
       if (uploadUrl.protocol !== 'https:' || uploadUrl.username || uploadUrl.password) throw new Error('OneDrive returned an invalid upload session URL.');
+      // The upload URL is provider-supplied: validate its host (public, no
+      // credentials) before any CV bytes are sent to it.
+      try { await assertPublicHttpUrl(uploadUrl.href); }
+      catch { throw new Error('OneDrive returned an invalid upload session URL.'); }
       for (let offset = 0; offset < stat.size;) {
         const length = Math.min(CHUNK_SIZE, stat.size - offset);
         const body = new Uint8Array(length);

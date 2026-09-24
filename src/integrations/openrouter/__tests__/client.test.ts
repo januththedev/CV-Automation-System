@@ -2,12 +2,25 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { chatJSON, InvalidJSONError, listModels, validateModel } from '../client.js';
 import type { OpenRouterConfig } from '../../../contracts.js';
 
+// The resolving guard is covered in url-guard.test.ts; mocked pass-through here
+// keeps these transport tests hermetic, with an explicit rejection test below.
+// isPublicHost stays REAL so the literal-host rejection is still exercised.
+const guard = vi.hoisted(() => ({ assertPublicHttpUrl: vi.fn(async (url: string) => new URL(url)) }));
+vi.mock('../../../network/url-guard.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../network/url-guard.js')>();
+  return { ...actual, assertPublicHttpUrl: guard.assertPublicHttpUrl };
+});
+
 const dummyKey = ['not', 'a', 'credential'].join('-');
 const cfg: OpenRouterConfig = { apiKey: dummyKey, model: 'google/gemini-3.8-flash' };
 const completion = (content: string, extra = {}) => new Response(JSON.stringify({
   choices: [{ finish_reason: 'stop', message: { content, ...extra } }],
 }));
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  guard.assertPublicHttpUrl.mockClear();
+  guard.assertPublicHttpUrl.mockImplementation(async (url: string) => new URL(url));
+});
 
 describe('OpenRouter transport (no network)', () => {
   it('sends exact model, JSON format and no tools', async () => {
@@ -30,6 +43,14 @@ describe('OpenRouter transport (no network)', () => {
       'https://169.254.169.254/v1', 'https://localhost/v1', 'https://[::1]/v1', 'https://[fc00::1]/v1']) {
       await expect(chatJSON('s', 'u', { ...cfg, baseUrl })).rejects.toThrow(/public address/);
     }
+  });
+
+  it('refuses to send the API key when the endpoint host fails the resolving guard', async () => {
+    const fetch = vi.fn().mockResolvedValue(completion('{}'));
+    vi.stubGlobal('fetch', fetch);
+    guard.assertPublicHttpUrl.mockRejectedValue(new Error('Request URL resolved to a non-public address'));
+    await expect(chatJSON('s', 'u', cfg)).rejects.toThrow('public address');
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('retries transient responses, not authentication failures', async () => {

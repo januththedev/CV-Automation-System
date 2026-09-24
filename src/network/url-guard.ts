@@ -47,6 +47,8 @@ function publicIpv6(host: string): boolean {
   if (h === '::' || h === '::1') return false;                       // unspecified / loopback
   if (h.startsWith('fc') || h.startsWith('fd')) return false;        // fc00::/7 unique-local
   if (/^fe[89ab]/.test(h)) return false;                             // fe80::/10 link-local
+  if (h.startsWith('fec') || h.startsWith('fed') || h.startsWith('fee') || h.startsWith('fef')) return false; // fec0::/10 site-local
+  if (h.startsWith('ff')) return false;                              // ff00::/8 multicast
   if (h.startsWith('2001:db8')) return false;                        // documentation
   if (h.startsWith('::ffff:')) {                                     // v4-mapped
     const v4 = parseV4(h.slice(7));

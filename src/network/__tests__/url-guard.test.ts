@@ -54,6 +54,8 @@ describe('assertPublicHttpUrl SSRF guard', () => {
     'https://[fc00::1]/x',
     'https://[fd12:3456::1]/x',
     'https://[fe80::1]/x',
+    'https://[fec0::1]/x',
+    'https://[ff02::1]/x',
     'https://[2001:db8::1]/x',
     'https://[::ffff:127.0.0.1]/x',
     'https://[::ffff:10.0.0.1]/x',
