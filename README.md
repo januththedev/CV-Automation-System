@@ -101,15 +101,19 @@ It does the whole job in one pass:
 
 1. **Installs dependencies** (`npm ci`), enables the native database build Kali
    blocks by default, and compiles the appliance.
-2. **Asks you for each credential, one by one** — secrets are hidden while you
-   type them. The WhatsApp number you enter here is the number every system
-   notice goes to, and it is saved in the appliance **database**.
-3. **Saves everything** into the protected `data/cv-auto/config/runtime.env`
-   (0600) and generates your admin token. If a configuration already exists it
-   asks before touching it, and always keeps a timestamped backup.
-4. **Starts redis, the API, the worker, and the admin panel** and prints the
-   banner below, then sends the WhatsApp "CV AUTOMATION ONLINE" message to the
-   number you entered.
+2. **Asks you for each credential, one by one** — every prompt tells you
+   exactly *where* to find the value (Meta Business Suite, OpenRouter, Google
+   Cloud, Microsoft Entra), secrets are shown while you type and cleared after
+   Enter, and the full guide is in [docs/CREDENTIALS.md](docs/CREDENTIALS.md).
+3. **Shows a review screen with secrets masked** — answer `n` to go through the
+   values again. Saving writes the protected
+   `data/cv-auto/config/runtime.env` (0600) and generates your admin token. An
+   existing configuration is only ever replaced after a backup, never erased.
+4. **Starts redis, the API, the worker, and the admin panel**, then **verifies
+   they actually answer** before printing the banner — if something fails to
+   come up you get the last 20 log lines instead of silence.
+5. **Prints the banner** below and sends the WhatsApp "CV AUTOMATION ONLINE"
+   message to the number you entered.
 
 To stop: `node scripts/run-native.mjs --stop`. To change credentials later:
 run it again and answer `y` when it asks to overwrite (the old file is backed

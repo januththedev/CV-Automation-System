@@ -1,7 +1,9 @@
 // One-command native launcher for Kali: installs dependencies, builds,
-// asks for the provider credentials interactively (secrets hidden), saves
-// them into the protected runtime.env, starts redis + api + worker + admin,
-// then prints the connection banner and sends the WhatsApp ONLINE notice.
+// asks for the provider credentials interactively (each prompt explains where
+// to find the value; typed text is visible while entering and cleared after
+// Enter), shows a masked review, saves into the protected runtime.env,
+// starts redis + api + worker + admin, verifies the stack came up, prints the
+// connection banner, and sends the WhatsApp ONLINE notice.
 //
 // Usage:  node scripts/run-native.mjs          (install + ask + start)
 //         node scripts/run-native.mjs --stop   (stop services and redis)
@@ -27,6 +29,7 @@ function run(cmd, args, opts = {}) {
 function quiet(cmd, args) {
   return spawnSync(cmd, args, { stdio: 'ignore', cwd: ROOT }).status === 0;
 }
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // One readline instance for the whole session. Lines are queued as they
 // arrive (piped input delivers them all at once, so a per-question listener
@@ -61,44 +64,95 @@ function ask(question, hidden) {
   });
 }
 
-async function requiredHidden(label, envName, out) {
-  while (!(out[envName] ?? '').trim()) {
-    out[envName] = await ask(`${label}: `, true);
-    if (!out[envName].trim()) console.log('  (required — cannot be empty)');
+const FIELDS = [
+  { env: 'CV_WHATSAPP_TOKEN', label: 'WhatsApp permanent access token', secret: true,
+    where: 'Meta Business Suite → WhatsApp Manager → API Setup → Permanent token (or a System User token)' },
+  { env: 'CV_WHATSAPP_PHONE_ID', label: 'WhatsApp Phone Number ID',
+    where: 'WhatsApp Manager → Phone numbers → your number → Settings → Phone number ID (a long digit ID — NOT your phone number)' },
+  { env: 'CV_WHATSAPP_WABA_ID', label: 'WhatsApp Business Account ID',
+    where: 'WhatsApp Manager → Account overview → Business Account ID' },
+  { env: 'CV_WHATSAPP_VERIFY_TOKEN', label: 'Webhook verify token (invent any random string)', secret: true,
+    where: 'Anything you choose (e.g. 32 random characters) — you type the same value into Meta when setting the webhook' },
+  { env: 'CV_WHATSAPP_APP_SECRET', label: 'WhatsApp App Secret', secret: true,
+    where: 'Meta Business Suite → App settings → Basic → App secret → Show → Copy' },
+  { env: 'CV_OPENROUTER_KEY', label: 'OpenRouter API key', secret: true,
+    where: 'openrouter.ai → Account → API Keys → Create new key' },
+  { env: 'CV_SHEET_ID', label: 'Google Sheet ID',
+    where: 'Open your sheet in a browser; the ID is the long string between /d/ and /edit in the URL' },
+  { env: 'CV_SHEETS_SERVICE_ACCOUNT_EMAIL', label: 'Sheets service account email',
+    where: 'Google Cloud Console → IAM & Admin → Service Accounts → the service account you created' },
+  { env: 'CV_ONEDRIVE_CLIENT_ID', label: 'OneDrive (Microsoft) application client ID',
+    where: 'Microsoft Entra admin center → App registrations → New registration → copy "Application (client) ID"' },
+  { env: 'CV_ADMIN_NUMBER', label: 'WhatsApp number that receives system notices', pattern: /^\+?\d{7,15}$/,
+    where: 'Your own WhatsApp number in international format, digits with optional + (e.g. 94771234567)' },
+];
+
+function mask(value, secret) {
+  if (!secret) return value;
+  const text = String(value);
+  return text.length <= 8 ? '•'.repeat(text.length) : `••••${text.slice(-4)}`;
+}
+
+async function askField(field, out) {
+  if ((out[field.env] ?? '').trim()) {
+    console.log(`${field.label}: [taken from your environment]`);
+    return;
+  }
+  console.log(`\n${field.label}`);
+  console.log(`  ↳ where: ${field.where}`);
+  while (true) {
+    out[field.env] = await ask('  value: ', Boolean(field.secret));
+    if (out[field.env].trim() && (!field.pattern || field.pattern.test(out[field.env]))) return;
+    console.log(field.pattern ? '  (invalid — expected e.g. 94771234567)' : '  (required — cannot be empty)');
   }
 }
 
-async function requiredVisible(label, envName, out, pattern) {
-  while (true) {
-    out[envName] = await ask(`${label}: `, false);
-    if (out[envName].trim() && (!pattern || pattern.test(out[envName]))) return;
-    console.log(pattern ? '  (invalid format — expected e.g. 9477XXXXXXXX)' : '  (required — cannot be empty)');
+async function askPrivateKey(out) {
+  if ((out.CV_SHEETS_PRIVATE_KEY ?? '').trim()) {
+    console.log('Service account private key: [taken from your environment]');
+    return;
+  }
+  console.log('\nService account private key');
+  console.log('  ↳ where: the JSON key file you downloaded when creating the service account');
+  const keyPath = await ask('  path to the key JSON file (Enter to paste the key instead): ', false);
+  if (keyPath) {
+    if (!fs.existsSync(keyPath)) throw new Error(`Key file not found: ${keyPath}`);
+    out.CV_SHEETS_PRIVATE_KEY = fs.readFileSync(keyPath, 'utf8');
+    return;
+  }
+  while (!(out.CV_SHEETS_PRIVATE_KEY ?? '').trim()) {
+    out.CV_SHEETS_PRIVATE_KEY = await ask('  paste the key (single line, newlines as literal \\n): ', true);
+    if (!out.CV_SHEETS_PRIVATE_KEY.trim()) console.log('  (required — cannot be empty)');
   }
 }
 
 async function collectCredentials() {
   const out = { ...process.env };
   console.log('\n=== PROVIDER CREDENTIALS ===');
-  console.log('What you type is shown while you enter it, then cleared after you press Enter.');
-  console.log('Press Enter for any value already exported in your environment.');
-  await requiredHidden('WhatsApp permanent access token', 'CV_WHATSAPP_TOKEN', out);
-  await requiredVisible('WhatsApp Phone Number ID', 'CV_WHATSAPP_PHONE_ID', out);
-  await requiredVisible('WhatsApp Business Account ID', 'CV_WHATSAPP_WABA_ID', out);
-  await requiredHidden('Webhook verify token (make up a random string)', 'CV_WHATSAPP_VERIFY_TOKEN', out);
-  await requiredHidden('WhatsApp App Secret', 'CV_WHATSAPP_APP_SECRET', out);
-  await requiredHidden('OpenRouter API key', 'CV_OPENROUTER_KEY', out);
-  await requiredVisible('Google Sheet ID', 'CV_SHEET_ID', out);
-  await requiredVisible('Sheets service account email', 'CV_SHEETS_SERVICE_ACCOUNT_EMAIL', out);
-  const keyPath = await ask('Path to the service-account key JSON file (Enter to paste the key instead): ', false);
-  if (keyPath) {
-    if (!fs.existsSync(keyPath)) throw new Error(`Key file not found: ${keyPath}`);
-    out.CV_SHEETS_PRIVATE_KEY = fs.readFileSync(keyPath, 'utf8');
-  } else {
-    await requiredHidden('Service account private key (single line, newlines as literal \\n)', 'CV_SHEETS_PRIVATE_KEY', out);
-  }
-  await requiredVisible('OneDrive (Microsoft) application client ID', 'CV_ONEDRIVE_CLIENT_ID', out);
-  await requiredVisible('WhatsApp number that receives system notices (e.g. 9477XXXXXXXX)', 'CV_ADMIN_NUMBER', out, /^\+?\d{7,15}$/);
+  console.log('Each prompt explains where to find the value. What you type is shown');
+  console.log('while you enter it, then cleared after you press Enter.');
+  console.log('Values already exported in your environment are kept automatically.');
+  for (const field of FIELDS) await askField(field, out);
+  await askPrivateKey(out);
   return out;
+}
+
+async function reviewAndSave(collected) {
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    console.log('\n=== REVIEW (secrets masked) ===');
+    for (const field of FIELDS) console.log(`  ${field.label}: ${mask(collected[field.env], field.secret)}`);
+    console.log(`  Service account private key: ${mask(collected.CV_SHEETS_PRIVATE_KEY, true)}`);
+    const answer = await ask('\nSave this configuration? [Y/n]: ', false);
+    if (/^n/i.test(answer)) {
+      console.log('Let\'s go through the values again...');
+      for (const field of FIELDS) delete collected[field.env];
+      delete collected.CV_SHEETS_PRIVATE_KEY;
+      return reviewAndSave(await collectCredentials());
+    }
+    configure(CONFIG_DIR, collected);
+    return;
+  }
+  throw new Error('Configuration not confirmed after 3 attempts — nothing was saved');
 }
 
 async function installAndBuild() {
@@ -158,6 +212,27 @@ function startService(entry, logName) {
   fs.closeSync(fd);
 }
 
+function httpOk(url) {
+  const result = spawnSync('curl', ['-fsS', '-m', '2', '-o', '/dev/null', url], { stdio: 'ignore' });
+  return result.status === 0;
+}
+
+async function waitForStack() {
+  const apiPort = process.env.CV_API_PORT ?? '3000';
+  const adminPort = process.env.CV_ADMIN_PORT ?? '3001';
+  for (let attempt = 0; attempt < 15; attempt += 1) {
+    if (httpOk(`http://127.0.0.1:${apiPort}/health`) && httpOk(`http://127.0.0.1:${adminPort}/admin/dashboard`)) return true;
+    await sleep(1000);
+  }
+  return false;
+}
+
+function tailLog(name) {
+  const file = path.join(LOG_DIR, name);
+  if (!fs.existsSync(file)) return '(no log file)';
+  return fs.readFileSync(file, 'utf8').split(/\r?\n/).slice(-20).join('\n');
+}
+
 function localIp() {
   const found = Object.values(networkInterfaces()).flat()
     .find((a) => a && !a.internal && a.family === 'IPv4');
@@ -178,24 +253,34 @@ async function start() {
   await installAndBuild();
   const runtimeFile = path.join(CONFIG_DIR, 'runtime.env');
   if (fs.existsSync(runtimeFile)) {
-    const answer = await ask('A saved configuration already exists. Overwrite it? [y/N]: ', false);
-    if (!/^y/i.test(answer)) {
-      console.log('Keeping the existing configuration.');
-    } else {
+    const answer = await ask('\nA saved configuration already exists. Enter NEW values? [y/N]: ', false);
+    if (/^y/i.test(answer)) {
       const backup = `${runtimeFile}.bak-${Date.now()}`;
       fs.copyFileSync(runtimeFile, backup);
       console.log(`Existing configuration backed up to ${backup}`);
-      configure(CONFIG_DIR, await collectCredentials());
+      await reviewAndSave(await collectCredentials());
+    } else {
+      console.log('Keeping the existing configuration.');
     }
   } else {
-    configure(CONFIG_DIR, await collectCredentials());
+    await reviewAndSave(await collectCredentials());
   }
   console.log('Starting redis and the appliance services...');
   ensureRedis();
   startService('worker/index.js', 'worker.log');
   startService('api/index.js', 'api.log');
   startService('api/admin-server.js', 'admin.log');
-  await new Promise((resolve) => setTimeout(resolve, 4000));
+
+  console.log('Waiting for the stack to answer...');
+  if (!(await waitForStack())) {
+    console.error('\nThe appliance did not come up. Last 20 log lines:\n');
+    console.error(tailLog('api.log'));
+    console.error('\nCommon causes: port 3000 or 3001 already in use, or a bad configuration.');
+    process.exitCode = 1;
+    rl.close();
+    return;
+  }
+  console.log('Stack is up: API and admin panel are responding.\n');
 
   for (const [key, value] of Object.entries(loadRuntimeEnv())) process.env[key] = value;
 
